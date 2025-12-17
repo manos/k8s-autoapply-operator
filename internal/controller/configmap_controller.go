@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	autoapplyv1alpha1 "github.com/charlie/k8s-autoapply-operator/api/v1alpha1"
+	autoapplyv1alpha1 "github.com/manos/k8s-autoapply-operator/api/v1alpha1"
 )
 
 const (

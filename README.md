@@ -5,7 +5,7 @@ Automatically restart pods when their ConfigMaps change.
 ## Quick Install
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/charlie/k8s-autoapply-operator/main/install.yaml
+kubectl apply -f https://raw.githubusercontent.com/manos/k8s-autoapply-operator/main/install.yaml
 ```
 
 That's it! The operator now watches all ConfigMaps and restarts pods that use them.
@@ -13,7 +13,7 @@ That's it! The operator now watches all ConfigMaps and restarts pods that use th
 ## Uninstall
 
 ```bash
-kubectl delete -f https://raw.githubusercontent.com/charlie/k8s-autoapply-operator/main/install.yaml
+kubectl delete -f https://raw.githubusercontent.com/manos/k8s-autoapply-operator/main/install.yaml
 ```
 
 ## What it does
@@ -70,10 +70,10 @@ This ensures you never take down more than 50% of pods at once, and respects Pod
 make run
 
 # Build container image
-make docker-build IMG=your-registry/k8s-autoapply-operator:tag
+make docker-build IMG=ghcr.io/manos/k8s-autoapply-operator:tag
 
 # Push image
-make docker-push IMG=your-registry/k8s-autoapply-operator:tag
+make docker-push IMG=ghcr.io/manos/k8s-autoapply-operator:tag
 ```
 
 ## License

@@ -1,4 +1,4 @@
-module github.com/charlie/k8s-autoapply-operator
+module github.com/manos/k8s-autoapply-operator
 
 go 1.25.3
 

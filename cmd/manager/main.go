@@ -12,8 +12,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	autoapplyv1alpha1 "github.com/charlie/k8s-autoapply-operator/api/v1alpha1"
-	"github.com/charlie/k8s-autoapply-operator/internal/controller"
+	autoapplyv1alpha1 "github.com/manos/k8s-autoapply-operator/api/v1alpha1"
+	"github.com/manos/k8s-autoapply-operator/internal/controller"
 )
 
 var (

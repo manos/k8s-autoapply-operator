@@ -22,11 +22,13 @@ import (
 
 const (
 	// Time to wait between restart batches
-	batchWaitDuration = 5 * time.Second
+	batchWaitDuration = 1 * time.Second
 	// Time to wait for pods to become ready
-	podReadyTimeout = 60 * time.Second
-	// Poll interval when waiting for pods
-	pollInterval = 2 * time.Second
+	podReadyTimeout = 120 * time.Second
+	// Poll interval when waiting for pods or PDB
+	pollInterval = 1 * time.Second
+	// Max time to wait for PDB to allow a deletion
+	pdbWaitTimeout = 5 * time.Minute
 )
 
 // ConfigMapReconciler watches ConfigMaps and restarts pods that use them
@@ -92,16 +94,10 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	logger.Info("Found pods to restart", "count", len(podsToRestart))
 
-	// Load PDBs for the namespace
-	pdbs, err := r.loadPDBs(ctx, configMap.Namespace)
-	if err != nil {
-		logger.Error(err, "Failed to load PDBs, proceeding without PDB checks")
-	}
-
 	// Perform rolling restart: 50% -> wait -> check health -> 50%
-	if err := r.rollingRestart(ctx, podsToRestart, pdbs); err != nil {
+	// Respects PDBs by waiting until deletion is allowed
+	if err := r.rollingRestart(ctx, configMap.Namespace, podsToRestart); err != nil {
 		logger.Error(err, "Rolling restart encountered errors")
-		// Don't return error - we've done what we can
 	}
 
 	return ctrl.Result{}, nil
@@ -145,7 +141,8 @@ func (r *ConfigMapReconciler) findPodsUsingConfigMap(ctx context.Context, config
 }
 
 // rollingRestart performs a 50/50 rolling restart with health checks
-func (r *ConfigMapReconciler) rollingRestart(ctx context.Context, pods []corev1.Pod, pdbs []policyv1.PodDisruptionBudget) error {
+// It waits for PDBs to allow deletion rather than skipping pods
+func (r *ConfigMapReconciler) rollingRestart(ctx context.Context, namespace string, pods []corev1.Pod) error {
 	logger := log.FromContext(ctx)
 
 	if len(pods) == 0 {
@@ -162,10 +159,14 @@ func (r *ConfigMapReconciler) rollingRestart(ctx context.Context, pods []corev1.
 		"firstBatch", len(firstBatch),
 		"secondBatch", len(secondBatch))
 
-	// Restart first batch
-	restartedPods := r.restartBatch(ctx, firstBatch, pdbs)
+	// Restart first batch (waits for PDB to allow each deletion)
+	restartedPods, err := r.restartBatchWithPDBWait(ctx, namespace, firstBatch)
+	if err != nil {
+		return fmt.Errorf("first batch failed: %w", err)
+	}
+
 	if len(restartedPods) == 0 {
-		logger.Info("No pods were restarted in first batch (PDB constraints)")
+		logger.Info("No pods were restarted in first batch")
 		return nil
 	}
 
@@ -181,33 +182,73 @@ func (r *ConfigMapReconciler) rollingRestart(ctx context.Context, pods []corev1.
 		}
 
 		logger.Info("First batch healthy, restarting second batch")
-		r.restartBatch(ctx, secondBatch, pdbs)
+		if _, err := r.restartBatchWithPDBWait(ctx, namespace, secondBatch); err != nil {
+			return fmt.Errorf("second batch failed: %w", err)
+		}
 	}
 
 	return nil
 }
 
-// restartBatch deletes pods in a batch, respecting PDBs
-func (r *ConfigMapReconciler) restartBatch(ctx context.Context, pods []corev1.Pod, pdbs []policyv1.PodDisruptionBudget) []corev1.Pod {
+// restartBatchWithPDBWait deletes pods in a batch, waiting for PDB to allow each deletion
+func (r *ConfigMapReconciler) restartBatchWithPDBWait(ctx context.Context, namespace string, pods []corev1.Pod) ([]corev1.Pod, error) {
 	logger := log.FromContext(ctx)
 	var restarted []corev1.Pod
 
 	for _, pod := range pods {
-		// Check PDB before deleting
-		if !r.canDeletePod(ctx, &pod, pdbs) {
-			logger.Info("Skipping pod due to PDB constraints", "pod", pod.Name)
+		// Wait for PDB to allow deletion
+		if err := r.waitForPDBAllowsDeletion(ctx, namespace, &pod); err != nil {
+			logger.Error(err, "Timeout waiting for PDB, skipping pod", "pod", pod.Name)
+			continue
+		}
+
+		// Re-fetch pod to make sure it still exists and hasn't changed
+		var currentPod corev1.Pod
+		if err := r.Get(ctx, client.ObjectKeyFromObject(&pod), &currentPod); err != nil {
+			logger.V(1).Info("Pod no longer exists, skipping", "pod", pod.Name)
+			continue
+		}
+
+		// Skip if pod is already being deleted
+		if currentPod.DeletionTimestamp != nil {
+			logger.V(1).Info("Pod already being deleted, skipping", "pod", pod.Name)
 			continue
 		}
 
 		logger.Info("Restarting pod", "pod", pod.Name)
-		if err := r.Delete(ctx, &pod); err != nil {
+		if err := r.Delete(ctx, &currentPod); err != nil {
 			logger.Error(err, "Failed to delete pod", "pod", pod.Name)
 			continue
 		}
-		restarted = append(restarted, pod)
+		restarted = append(restarted, currentPod)
 	}
 
-	return restarted
+	return restarted, nil
+}
+
+// waitForPDBAllowsDeletion waits until PDB allows deleting the pod
+func (r *ConfigMapReconciler) waitForPDBAllowsDeletion(ctx context.Context, namespace string, pod *corev1.Pod) error {
+	logger := log.FromContext(ctx)
+	deadline := time.Now().Add(pdbWaitTimeout)
+
+	for time.Now().Before(deadline) {
+		// Reload PDBs to get current status
+		pdbs, err := r.loadPDBs(ctx, namespace)
+		if err != nil {
+			logger.Error(err, "Failed to load PDBs")
+			// If we can't load PDBs, proceed anyway
+			return nil
+		}
+
+		if r.canDeletePod(ctx, pod, pdbs) {
+			return nil
+		}
+
+		logger.V(1).Info("Waiting for PDB to allow deletion", "pod", pod.Name)
+		time.Sleep(pollInterval)
+	}
+
+	return fmt.Errorf("timeout waiting for PDB to allow deletion of pod %s", pod.Name)
 }
 
 // canDeletePod checks if deleting a pod would violate any PDB

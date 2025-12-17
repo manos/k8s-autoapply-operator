@@ -1,0 +1,126 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: autoapplies.autoapply.io
+spec:
+  group: autoapply.io
+  names:
+    kind: AutoApply
+    listKind: AutoApplyList
+    plural: autoapplies
+    singular: autoapply
+    shortNames:
+      - aa
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          description: AutoApply watches a ConfigMap and automatically applies its manifests
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: AutoApplySpec defines the desired state of AutoApply
+              type: object
+              required:
+                - configMapRef
+              properties:
+                configMapRef:
+                  description: ConfigMapRef references the ConfigMap containing manifests to apply
+                  type: object
+                  required:
+                    - name
+                  properties:
+                    name:
+                      description: Name is the ConfigMap name
+                      type: string
+                    namespace:
+                      description: Namespace is the ConfigMap namespace (defaults to AutoApply's namespace)
+                      type: string
+                prune:
+                  description: Prune enables garbage collection of resources removed from the ConfigMap
+                  type: boolean
+                  default: false
+            status:
+              description: AutoApplyStatus defines the observed state of AutoApply
+              type: object
+              properties:
+                conditions:
+                  description: Conditions represent the latest available observations
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                    properties:
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      message:
+                        type: string
+                        maxLength: 32768
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      reason:
+                        type: string
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      status:
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      type:
+                        type: string
+                        maxLength: 316
+                        pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                appliedResources:
+                  description: AppliedResources lists the resources currently managed by this AutoApply
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      apiVersion:
+                        type: string
+                      kind:
+                        type: string
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                lastAppliedConfigMapResourceVersion:
+                  description: LastAppliedConfigMapResourceVersion tracks the ConfigMap version last applied
+                  type: string
+                observedGeneration:
+                  description: ObservedGeneration is the last observed generation
+                  type: integer
+                  format: int64
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: ConfigMap
+          type: string
+          jsonPath: .spec.configMapRef.name
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=='Ready')].status
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

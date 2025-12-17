@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -94,7 +95,7 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	logger.Info("Found pods to restart", "count", len(podsToRestart))
 
-	// Perform rolling restart: 50% -> wait -> check health -> 50%
+	// Perform rolling restart: 50% per owner -> wait -> check health -> remaining 50%
 	// Respects PDBs by waiting until deletion is allowed
 	if err := r.rollingRestart(ctx, configMap.Namespace, podsToRestart); err != nil {
 		logger.Error(err, "Rolling restart encountered errors")
@@ -140,7 +141,26 @@ func (r *ConfigMapReconciler) findPodsUsingConfigMap(ctx context.Context, config
 	return result
 }
 
-// rollingRestart performs a 50/50 rolling restart with health checks
+// podsByOwner groups pods by their controller owner UID
+// Pods without an owner are grouped under a zero UID
+func podsByOwner(pods []corev1.Pod) map[types.UID][]corev1.Pod {
+	groups := make(map[types.UID][]corev1.Pod)
+
+	for _, pod := range pods {
+		ownerUID := types.UID("")
+		for _, ref := range pod.OwnerReferences {
+			if ref.Controller != nil && *ref.Controller {
+				ownerUID = ref.UID
+				break
+			}
+		}
+		groups[ownerUID] = append(groups[ownerUID], pod)
+	}
+
+	return groups
+}
+
+// rollingRestart performs a 50/50 rolling restart PER OWNER with health checks
 // It waits for PDBs to allow deletion rather than skipping pods
 func (r *ConfigMapReconciler) rollingRestart(ctx context.Context, namespace string, pods []corev1.Pod) error {
 	logger := log.FromContext(ctx)
@@ -149,10 +169,29 @@ func (r *ConfigMapReconciler) rollingRestart(ctx context.Context, namespace stri
 		return nil
 	}
 
-	// Split into two batches
-	midpoint := (len(pods) + 1) / 2 // Round up for first batch
-	firstBatch := pods[:midpoint]
-	secondBatch := pods[midpoint:]
+	// Group pods by owner (Deployment/StatefulSet/ReplicaSet)
+	ownerGroups := podsByOwner(pods)
+
+	logger.Info("Grouped pods by owner", "ownerCount", len(ownerGroups), "totalPods", len(pods))
+
+	// Split each owner's pods into two batches (50/50)
+	var firstBatch, secondBatch []corev1.Pod
+
+	for ownerUID, ownerPods := range ownerGroups {
+		midpoint := (len(ownerPods) + 1) / 2 // Round up for first batch
+		firstBatch = append(firstBatch, ownerPods[:midpoint]...)
+		secondBatch = append(secondBatch, ownerPods[midpoint:]...)
+
+		ownerName := "standalone"
+		if ownerUID != "" {
+			ownerName = string(ownerUID)
+		}
+		logger.V(1).Info("Split owner pods",
+			"owner", ownerName,
+			"total", len(ownerPods),
+			"firstBatch", midpoint,
+			"secondBatch", len(ownerPods)-midpoint)
+	}
 
 	logger.Info("Starting rolling restart",
 		"total", len(pods),

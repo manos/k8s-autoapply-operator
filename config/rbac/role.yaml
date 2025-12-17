@@ -22,6 +22,14 @@ rules:
       - watch
       - delete
   - apiGroups:
+      - policy
+    resources:
+      - poddisruptionbudgets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
       - autoapply.io
     resources:
       - autoapplyconfigs

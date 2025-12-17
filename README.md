@@ -4,9 +4,15 @@ Automatically restart pods when their ConfigMaps change.
 
 ## What it does
 
-Kubernetes doesn't restart pods when a mounted ConfigMap changes. This operator watches for ConfigMap updates and automatically deletes (restarts) pods that reference them.
+Kubernetes doesn't restart pods when a mounted ConfigMap changes. This operator watches for ConfigMap updates and automatically restarts pods that reference them.
 
-It detects ConfigMap usage via:
+**Safe rolling restarts:**
+- Restarts 50% of affected pods first
+- Waits 5 seconds, then checks if replacement pods are healthy
+- Only restarts the remaining 50% if the first batch is healthy
+- Respects PodDisruptionBudgets - won't delete pods that would violate a PDB
+
+**Detects ConfigMap usage via:**
 - Volume mounts (`volumes[].configMap`)
 - Projected volumes
 - `envFrom` ConfigMap references
@@ -58,9 +64,12 @@ make docker-build IMG=your-registry/k8s-autoapply-operator:tag
 
 ## How it works
 
-1. Operator starts and begins tracking ConfigMap versions
-2. When a ConfigMap's ResourceVersion changes, it finds all pods in that namespace
-3. For each pod that mounts/references the ConfigMap, it deletes the pod
-4. The pod's controller (Deployment, StatefulSet, etc.) recreates it with the new ConfigMap
+1. Operator watches all ConfigMaps for changes
+2. When a ConfigMap's ResourceVersion changes, finds all pods that reference it
+3. Splits affected pods into two batches (50/50)
+4. Deletes first batch (respecting PDBs)
+5. Waits 5 seconds, then verifies replacement pods are healthy (Running + Ready)
+6. If healthy, deletes second batch
+7. If first batch isn't healthy within 60s, aborts and doesn't touch second batch
 
-Note: The operator waits 10 seconds on startup before acting to avoid mass restarts.
+This ensures you never take down more than 50% of pods at once, and only proceed if the first batch recovers successfully.

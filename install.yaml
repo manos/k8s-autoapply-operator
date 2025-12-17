@@ -1,8 +1,8 @@
 # k8s-autoapply-operator
 # Automatically restart pods when ConfigMaps change
 #
-# Install: kubectl apply -f https://raw.githubusercontent.com/charlie/k8s-autoapply-operator/main/install.yaml
-# Uninstall: kubectl delete -f https://raw.githubusercontent.com/charlie/k8s-autoapply-operator/main/install.yaml
+# Install: kubectl apply -f https://raw.githubusercontent.com/manos/k8s-autoapply-operator/main/install.yaml
+# Uninstall: kubectl delete -f https://raw.githubusercontent.com/manos/k8s-autoapply-operator/main/install.yaml
 ---
 apiVersion: v1
 kind: Namespace
@@ -115,7 +115,7 @@ spec:
       serviceAccountName: autoapply-controller
       containers:
         - name: manager
-          image: ghcr.io/charlie/k8s-autoapply-operator:latest
+          image: ghcr.io/manos/k8s-autoapply-operator:latest
           args:
             - --leader-elect
           ports:

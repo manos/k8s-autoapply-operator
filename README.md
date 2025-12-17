@@ -33,9 +33,19 @@ Kubernetes doesn't restart pods when a mounted ConfigMap changes. This operator 
 - `envFrom` ConfigMap references
 - Individual `env` vars from ConfigMaps
 
+## Default Exclusions
+
+The following are **always excluded** (built-in safe defaults):
+
+| Exclusion | Reason |
+|-----------|--------|
+| `kube-system` namespace | Critical system components |
+| `^coredns-.*` pods | Cluster DNS resolution |
+| `.*-csi-.*` pods | Storage drivers |
+
 ## Configuration (Optional)
 
-By default, the operator restarts ALL pods that use a changed ConfigMap. To exclude certain pods or namespaces:
+Create an `AutoApplyConfig` to add additional exclusions:
 
 ```yaml
 apiVersion: autoapply.io/v1alpha1
@@ -47,10 +57,53 @@ spec:
     - "^kube-.*"           # Regex: exclude pods starting with kube-
     - ".*-migration-.*"    # Regex: exclude migration jobs
   excludeNamespaces:
-    - kube-system
     - cert-manager
   yoloMode: false          # Set to true to restart all pods at once (no rolling restart)
 ```
+
+### Recommended Full Exclusions
+
+For production clusters, consider excluding critical infrastructure:
+
+```yaml
+apiVersion: autoapply.io/v1alpha1
+kind: AutoApplyConfig
+metadata:
+  name: production-safe
+spec:
+  excludeNamespaces:
+    # Already excluded by default: kube-system
+    - kube-public
+    - kube-node-lease
+    - cert-manager
+    - ingress-nginx       # or your ingress namespace
+    - monitoring          # prometheus, grafana
+    - flux-system         # if using Flux
+    - argocd              # if using ArgoCD
+  excludePods:
+    # Already excluded by default: ^coredns-.*, .*-csi-.*
+    
+    # Control plane (if running in-cluster)
+    - "^kube-apiserver-.*"
+    - "^kube-controller-manager-.*"
+    - "^kube-scheduler-.*"
+    - "^etcd-.*"
+    
+    # CNI plugins
+    - "^calico-.*"
+    - "^cilium-.*"
+    - "^flannel-.*"
+    - "^weave-.*"
+    
+    # Jobs (one-time, shouldn't restart)
+    - ".*-job-.*"
+```
+
+| Pattern | Reason |
+|---------|--------|
+| CNI pods | Restarting can break node networking |
+| Control plane | Can destabilize cluster |
+| Jobs | They're meant to run once |
 
 ### YOLO Mode
 
@@ -62,8 +115,10 @@ kind: AutoApplyConfig
 metadata:
   name: yolo
 spec:
-  yoloMode: true  # 🔥 Restarts ALL affected pods simultaneously
+  yoloMode: true  # 🔥 Restarts ALL affected pods simultaneously (ignores batching)
 ```
+
+**Note:** YOLO mode still respects exclusions, it just skips the 50/50 rolling restart.
 
 ## How it works
 
@@ -82,6 +137,9 @@ This ensures you never take down more than 50% of any single Deployment/Stateful
 ```bash
 # Run locally (uses current kubeconfig)
 make run
+
+# Run tests
+make test
 
 # Build container image
 make docker-build IMG=ghcr.io/manos/k8s-autoapply-operator:tag

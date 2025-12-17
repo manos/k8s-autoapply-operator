@@ -523,14 +523,33 @@ type operatorConfig struct {
 	yoloMode           bool
 }
 
-// loadConfig loads and merges all AutoApplyConfig resources
+// Default safe exclusions - always applied
+var (
+	defaultExcludeNamespaces = []string{"kube-system"}
+	defaultExcludePodPatterns = []string{
+		`^coredns-.*`,  // CoreDNS - cluster DNS
+		`.*-csi-.*`,    // CSI drivers - storage
+	}
+)
+
+// loadConfig loads and merges all AutoApplyConfig resources with defaults
 func (r *ConfigMapReconciler) loadConfig(ctx context.Context) operatorConfig {
-	var configList autoapplyv1alpha1.AutoApplyConfigList
-	if err := r.List(ctx, &configList); err != nil {
-		return operatorConfig{}
+	// Start with defaults
+	cfg := operatorConfig{
+		excludeNamespaces: append([]string{}, defaultExcludeNamespaces...),
+	}
+	for _, pattern := range defaultExcludePodPatterns {
+		if re, err := regexp.Compile(pattern); err == nil {
+			cfg.excludePodPatterns = append(cfg.excludePodPatterns, re)
+		}
 	}
 
-	var cfg operatorConfig
+	// Merge user configs
+	var configList autoapplyv1alpha1.AutoApplyConfigList
+	if err := r.List(ctx, &configList); err != nil {
+		return cfg
+	}
+
 	for _, item := range configList.Items {
 		for _, pattern := range item.Spec.ExcludePods {
 			if re, err := regexp.Compile(pattern); err == nil {

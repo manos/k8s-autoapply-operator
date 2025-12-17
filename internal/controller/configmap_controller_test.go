@@ -880,7 +880,7 @@ func TestLoadConfig(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "config1"},
 		Spec: autoapplyv1alpha1.AutoApplyConfigSpec{
 			ExcludePods:       []string{"^kube-.*"},
-			ExcludeNamespaces: []string{"kube-system"},
+			ExcludeNamespaces: []string{"monitoring"},
 		},
 	}
 	cfg2 := &autoapplyv1alpha1.AutoApplyConfig{
@@ -897,15 +897,36 @@ func TestLoadConfig(t *testing.T) {
 
 	config := r.loadConfig(ctx)
 
-	// Should merge all configs
-	if len(config.excludePodPatterns) != 2 {
-		t.Errorf("Expected 2 exclude patterns, got %d", len(config.excludePodPatterns))
+	// Should merge defaults + user configs
+	// Defaults: 2 pod patterns (coredns, csi) + 1 namespace (kube-system)
+	// User: 2 pod patterns + 2 namespaces
+	if len(config.excludePodPatterns) != 4 {
+		t.Errorf("Expected 4 exclude patterns (2 default + 2 user), got %d", len(config.excludePodPatterns))
 	}
-	if len(config.excludeNamespaces) != 2 {
-		t.Errorf("Expected 2 exclude namespaces, got %d", len(config.excludeNamespaces))
+	if len(config.excludeNamespaces) != 3 {
+		t.Errorf("Expected 3 exclude namespaces (1 default + 2 user), got %d", len(config.excludeNamespaces))
 	}
 	if !config.yoloMode {
 		t.Error("Expected yoloMode to be true (any config enabling it)")
+	}
+}
+
+func TestLoadConfig_DefaultsOnly(t *testing.T) {
+	r, _ := setupTestReconciler()
+	ctx := context.Background()
+
+	// No user configs - should still have defaults
+	config := r.loadConfig(ctx)
+
+	// Defaults: 2 pod patterns (coredns, csi) + 1 namespace (kube-system)
+	if len(config.excludePodPatterns) != 2 {
+		t.Errorf("Expected 2 default exclude patterns, got %d", len(config.excludePodPatterns))
+	}
+	if len(config.excludeNamespaces) != 1 {
+		t.Errorf("Expected 1 default exclude namespace, got %d", len(config.excludeNamespaces))
+	}
+	if config.excludeNamespaces[0] != "kube-system" {
+		t.Errorf("Expected kube-system as default namespace, got %s", config.excludeNamespaces[0])
 	}
 }
 

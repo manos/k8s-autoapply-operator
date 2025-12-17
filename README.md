@@ -22,9 +22,9 @@ Kubernetes doesn't restart pods when a mounted ConfigMap changes. This operator 
 
 **Safe rolling restarts:**
 - Groups pods by owner (Deployment, StatefulSet, ReplicaSet)
-- Restarts 50% of each owner's pods first
+- Restarts 50% of each owner's pods first (or less, whatever PodDisruptionBudget allows)
 - Waits for replacement pods to be healthy
-- Only then restarts the remaining 50% per owner
+- Only then restarts the remaining 50% per owner (respecting PDB)
 - Respects PodDisruptionBudgets — waits for PDB to allow deletion
 
 **Detects ConfigMap usage via:**

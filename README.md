@@ -1,132 +1,66 @@
 # k8s-autoapply-operator
 
-A Kubernetes operator that watches ConfigMaps and automatically applies their manifest contents to the cluster.
+Automatically restart pods when their ConfigMaps change.
 
-## Description
+## What it does
 
-The AutoApply operator watches for `AutoApply` custom resources that reference ConfigMaps containing Kubernetes manifests. When the referenced ConfigMap changes, the operator automatically applies the updated manifests to the cluster.
+Kubernetes doesn't restart pods when a mounted ConfigMap changes. This operator watches for ConfigMap updates and automatically deletes (restarts) pods that reference them.
 
-**Key features:**
-- Watches ConfigMaps for changes and auto-applies manifests
-- Supports multi-document YAML in ConfigMap data
-- Optional pruning of resources removed from the ConfigMap
-- Tracks applied resources in status
+It detects ConfigMap usage via:
+- Volume mounts (`volumes[].configMap`)
+- Projected volumes
+- `envFrom` ConfigMap references
+- Individual `env` vars from ConfigMaps
 
-## Getting Started
-
-### Prerequisites
-
-- Go 1.22+
-- kubectl configured with cluster access
-- A Kubernetes cluster (v1.28+)
-
-### Installation
-
-1. Install the CRD:
+## Installation
 
 ```bash
-make install
+# Install CRD (optional, only needed for exclusions)
+kubectl apply -f config/crd/
+
+# Install RBAC
+kubectl apply -f config/rbac/
+
+# Deploy the operator
+kubectl apply -f config/manager/
 ```
 
-2. Deploy the controller:
+## Configuration (Optional)
 
-```bash
-make deploy
-```
-
-### Usage
-
-1. Create a ConfigMap with your manifests:
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: my-app-manifests
-  namespace: default
-data:
-  deployment.yaml: |
-    apiVersion: apps/v1
-    kind: Deployment
-    metadata:
-      name: nginx
-    spec:
-      replicas: 1
-      selector:
-        matchLabels:
-          app: nginx
-      template:
-        metadata:
-          labels:
-            app: nginx
-        spec:
-          containers:
-          - name: nginx
-            image: nginx:latest
-  service.yaml: |
-    apiVersion: v1
-    kind: Service
-    metadata:
-      name: nginx
-    spec:
-      selector:
-        app: nginx
-      ports:
-      - port: 80
-```
-
-2. Create an AutoApply resource to watch it:
+By default, the operator restarts ALL pods that use a changed ConfigMap. To exclude certain pods, create an `AutoApplyConfig`:
 
 ```yaml
 apiVersion: autoapply.io/v1alpha1
-kind: AutoApply
+kind: AutoApplyConfig
 metadata:
-  name: my-app
-  namespace: default
+  name: default
 spec:
-  configMapRef:
-    name: my-app-manifests
-  prune: true  # Delete resources when removed from ConfigMap
+  excludePods:
+    - "^kube-.*"           # Exclude kube-system pods
+    - ".*-migration-.*"    # Exclude migration jobs
+  excludeNamespaces:
+    - kube-system
+    - cert-manager
 ```
-
-Now when you update the ConfigMap, the operator will automatically apply the changes!
 
 ## Development
 
-### Building
-
 ```bash
-# Build the binary
+# Build
 make build
 
 # Run locally
 make run
 
 # Build Docker image
-make docker-build IMG=my-registry/k8s-autoapply-operator:tag
+make docker-build IMG=your-registry/k8s-autoapply-operator:tag
 ```
 
-### Testing
+## How it works
 
-```bash
-make test
-```
+1. Operator starts and begins tracking ConfigMap versions
+2. When a ConfigMap's ResourceVersion changes, it finds all pods in that namespace
+3. For each pod that mounts/references the ConfigMap, it deletes the pod
+4. The pod's controller (Deployment, StatefulSet, etc.) recreates it with the new ConfigMap
 
-## Project Structure
-
-```
-├── api/v1alpha1/          # CRD type definitions
-├── cmd/manager/           # Operator entrypoint
-├── config/
-│   ├── crd/              # CRD manifests
-│   ├── manager/          # Deployment manifests
-│   └── rbac/             # RBAC manifests
-├── internal/controller/   # Reconciliation logic
-├── Dockerfile
-├── Makefile
-└── go.mod
-```
-
-## License
-
-Apache 2.0
+Note: The operator waits 10 seconds on startup before acting to avoid mass restarts.

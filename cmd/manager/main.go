@@ -56,11 +56,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controller.AutoApplyReconciler{
+	if err = (&controller.ConfigMapReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AutoApply")
+		setupLog.Error(err, "unable to create controller", "controller", "ConfigMap")
 		os.Exit(1)
 	}
 
@@ -79,4 +79,3 @@ func main() {
 		os.Exit(1)
 	}
 }
-

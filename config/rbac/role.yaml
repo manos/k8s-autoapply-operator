@@ -4,34 +4,6 @@ kind: ClusterRole
 metadata:
   name: autoapply-controller-role
 rules:
-  # AutoApply resources
-  - apiGroups:
-      - autoapply.io
-    resources:
-      - autoapplies
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - patch
-      - update
-      - watch
-  - apiGroups:
-      - autoapply.io
-    resources:
-      - autoapplies/status
-    verbs:
-      - get
-      - patch
-      - update
-  - apiGroups:
-      - autoapply.io
-    resources:
-      - autoapplies/finalizers
-    verbs:
-      - update
-  # ConfigMaps for manifest sources
   - apiGroups:
       - ""
     resources:
@@ -40,18 +12,20 @@ rules:
       - get
       - list
       - watch
-  # Wide permissions for applying arbitrary resources
-  # In production, you may want to scope this down
   - apiGroups:
-      - "*"
+      - ""
     resources:
-      - "*"
+      - pods
     verbs:
-      - create
-      - delete
       - get
       - list
-      - patch
-      - update
       - watch
-
+      - delete
+  - apiGroups:
+      - autoapply.io
+    resources:
+      - autoapplyconfigs
+    verbs:
+      - get
+      - list
+      - watch

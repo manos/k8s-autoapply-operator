@@ -75,11 +75,11 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	logger.Info("ConfigMap changed, finding affected pods", "configmap", req.NamespacedName)
 
-	// Load exclusion config
-	excludePatterns, excludeNamespaces := r.loadExclusionConfig(ctx)
+	// Load config
+	cfg := r.loadConfig(ctx)
 
 	// Skip if namespace is excluded
-	for _, ns := range excludeNamespaces {
+	for _, ns := range cfg.excludeNamespaces {
 		if ns == configMap.Namespace {
 			logger.Info("Namespace excluded, skipping", "namespace", configMap.Namespace)
 			return ctrl.Result{}, nil
@@ -87,7 +87,7 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Find pods that use this ConfigMap
-	podsToRestart := r.findPodsUsingConfigMap(ctx, &configMap, excludePatterns)
+	podsToRestart := r.findPodsUsingConfigMap(ctx, &configMap, cfg.excludePodPatterns)
 	if len(podsToRestart) == 0 {
 		logger.Info("No pods to restart")
 		return ctrl.Result{}, nil
@@ -95,10 +95,15 @@ func (r *ConfigMapReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	logger.Info("Found pods to restart", "count", len(podsToRestart))
 
-	// Perform rolling restart: 50% per owner -> wait -> check health -> remaining 50%
-	// Respects PDBs by waiting until deletion is allowed
-	if err := r.rollingRestart(ctx, configMap.Namespace, podsToRestart); err != nil {
-		logger.Error(err, "Rolling restart encountered errors")
+	if cfg.yoloMode {
+		// YOLO MODE: restart everything at once, no batching, no health checks
+		logger.Info("YOLO MODE: restarting all pods at once")
+		r.yoloRestart(ctx, podsToRestart)
+	} else {
+		// Safe mode: 50% per owner -> wait -> check health -> remaining 50%
+		if err := r.rollingRestart(ctx, configMap.Namespace, podsToRestart); err != nil {
+			logger.Error(err, "Rolling restart encountered errors")
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -227,6 +232,20 @@ func (r *ConfigMapReconciler) rollingRestart(ctx context.Context, namespace stri
 	}
 
 	return nil
+}
+
+// yoloRestart deletes all pods at once without batching or health checks
+func (r *ConfigMapReconciler) yoloRestart(ctx context.Context, pods []corev1.Pod) {
+	logger := log.FromContext(ctx)
+
+	for _, pod := range pods {
+		logger.Info("YOLO: Restarting pod", "pod", pod.Name)
+		if err := r.Delete(ctx, &pod); err != nil {
+			logger.Error(err, "Failed to delete pod", "pod", pod.Name)
+		}
+	}
+
+	logger.Info("YOLO: All pods restarted", "count", len(pods))
 }
 
 // restartBatchWithPDBWait deletes pods in a batch, waiting for PDB to allow each deletion
@@ -497,23 +516,40 @@ func (r *ConfigMapReconciler) podUsesConfigMap(pod *corev1.Pod, configMapName st
 	return false
 }
 
-// loadExclusionConfig loads exclusion patterns from AutoApplyConfig
-func (r *ConfigMapReconciler) loadExclusionConfig(ctx context.Context) (podPatterns []*regexp.Regexp, namespaces []string) {
+// operatorConfig holds the merged configuration from all AutoApplyConfig resources
+type operatorConfig struct {
+	excludePodPatterns []*regexp.Regexp
+	excludeNamespaces  []string
+	yoloMode           bool
+}
+
+// loadConfig loads and merges all AutoApplyConfig resources
+func (r *ConfigMapReconciler) loadConfig(ctx context.Context) operatorConfig {
 	var configList autoapplyv1alpha1.AutoApplyConfigList
 	if err := r.List(ctx, &configList); err != nil {
-		return nil, nil
+		return operatorConfig{}
 	}
 
-	for _, cfg := range configList.Items {
-		for _, pattern := range cfg.Spec.ExcludePods {
+	var cfg operatorConfig
+	for _, item := range configList.Items {
+		for _, pattern := range item.Spec.ExcludePods {
 			if re, err := regexp.Compile(pattern); err == nil {
-				podPatterns = append(podPatterns, re)
+				cfg.excludePodPatterns = append(cfg.excludePodPatterns, re)
 			}
 		}
-		namespaces = append(namespaces, cfg.Spec.ExcludeNamespaces...)
+		cfg.excludeNamespaces = append(cfg.excludeNamespaces, item.Spec.ExcludeNamespaces...)
+		if item.Spec.YoloMode {
+			cfg.yoloMode = true
+		}
 	}
 
-	return podPatterns, namespaces
+	return cfg
+}
+
+// loadExclusionConfig loads exclusion patterns from AutoApplyConfig (legacy helper)
+func (r *ConfigMapReconciler) loadExclusionConfig(ctx context.Context) (podPatterns []*regexp.Regexp, namespaces []string) {
+	cfg := r.loadConfig(ctx)
+	return cfg.excludePodPatterns, cfg.excludeNamespaces
 }
 
 // isPodExcluded checks if pod name matches any exclusion pattern

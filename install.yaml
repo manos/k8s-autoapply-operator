@@ -49,6 +49,9 @@ spec:
                   type: array
                   items:
                     type: string
+                yoloMode:
+                  description: Disable safe rolling restarts - all pods restart at once
+                  type: boolean
             status:
               type: object
               properties:

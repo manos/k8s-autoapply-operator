@@ -49,6 +49,20 @@ spec:
   excludeNamespaces:
     - kube-system
     - cert-manager
+  yoloMode: false          # Set to true to restart all pods at once (no rolling restart)
+```
+
+### YOLO Mode
+
+If you're feeling brave (or testing in dev), enable `yoloMode` to skip all safety measures:
+
+```yaml
+apiVersion: autoapply.io/v1alpha1
+kind: AutoApplyConfig
+metadata:
+  name: yolo
+spec:
+  yoloMode: true  # 🔥 Restarts ALL affected pods simultaneously
 ```
 
 ## How it works

@@ -13,6 +13,10 @@ type AutoApplyConfigSpec struct {
 	// ExcludeNamespaces is a list of namespaces to exclude from watching
 	// +optional
 	ExcludeNamespaces []string `json:"excludeNamespaces,omitempty"`
+
+	// YoloMode disables safe rolling restarts - all pods restart at once
+	// +optional
+	YoloMode bool `json:"yoloMode,omitempty"`
 }
 
 // AutoApplyConfigStatus defines the observed state

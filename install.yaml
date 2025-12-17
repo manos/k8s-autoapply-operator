@@ -1,0 +1,153 @@
+# k8s-autoapply-operator
+# Automatically restart pods when ConfigMaps change
+#
+# Install: kubectl apply -f https://raw.githubusercontent.com/charlie/k8s-autoapply-operator/main/install.yaml
+# Uninstall: kubectl delete -f https://raw.githubusercontent.com/charlie/k8s-autoapply-operator/main/install.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autoapply-system
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: autoapplyconfigs.autoapply.io
+spec:
+  group: autoapply.io
+  names:
+    kind: AutoApplyConfig
+    listKind: AutoApplyConfigList
+    plural: autoapplyconfigs
+    singular: autoapplyconfig
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          description: AutoApplyConfig configures which pods to exclude from auto-restart
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              properties:
+                excludePods:
+                  description: Regex patterns for pod names to exclude from auto-restart
+                  type: array
+                  items:
+                    type: string
+                excludeNamespaces:
+                  description: Namespaces to exclude from watching
+                  type: array
+                  items:
+                    type: string
+            status:
+              type: object
+              properties:
+                lastUpdated:
+                  type: string
+                  format: date-time
+      subresources:
+        status: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: autoapply-controller
+  namespace: autoapply-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: autoapply-controller-role
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, delete]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [autoapply.io]
+    resources: [autoapplyconfigs]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: autoapply-controller-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: autoapply-controller-role
+subjects:
+  - kind: ServiceAccount
+    name: autoapply-controller
+    namespace: autoapply-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoapply-controller
+  namespace: autoapply-system
+  labels:
+    app: autoapply-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: autoapply-controller
+  template:
+    metadata:
+      labels:
+        app: autoapply-controller
+    spec:
+      serviceAccountName: autoapply-controller
+      containers:
+        - name: manager
+          image: ghcr.io/charlie/k8s-autoapply-operator:latest
+          args:
+            - --leader-elect
+          ports:
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              cpu: 200m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+      terminationGracePeriodSeconds: 10
+
